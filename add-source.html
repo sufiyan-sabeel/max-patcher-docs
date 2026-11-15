@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add a patch source to MAX Patcher</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 24px; background: #12171A; color: #E8F6F8;
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.35rem; margin: 0 0 .25rem; }
+  .sub { color: #93A6AC; margin: 0 0 1.5rem; }
+  .card { background: #1A2226; border: 1px solid #243136; border-radius: 14px; padding: 18px; }
+  .row { display: flex; gap: .75rem; align-items: flex-start; margin-bottom: .6rem; }
+  .row dt { color: #93A6AC; min-width: 7rem; }
+  dd { margin: 0; word-break: break-word; }
+  .ok { color: #22C3D6; }
+  .bad { color: #FF8A80; }
+  a.btn { display: inline-block; margin-top: 1.25rem; padding: .8rem 1.1rem; border-radius: 10px;
+          background: #22C3D6; color: #06171A; font-weight: 600; text-decoration: none; }
+  a.btn[aria-disabled="true"] { background: #243136; color: #7C8C92; pointer-events: none; }
+  code { background: #0E1416; padding: .1rem .35rem; border-radius: 6px; }
+  .note { color: #93A6AC; font-size: .875rem; margin-top: 1.5rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Add a patch source</h1>
+  <p class="sub">MAX Patcher asks you to confirm before anything is added.</p>
+
+  <div class="card" id="card" aria-live="polite">
+    <div class="row"><span class="ok">Checking the link…</span></div>
+  </div>
+
+  <a class="btn" id="open" aria-disabled="true" href="#">Open in MAX Patcher</a>
+
+  <p class="note">
+    A patch source is a repository that publishes a <code>patches-bundle.json</code>. Only GitHub and
+    GitLab repositories are supported. MAX Patcher checks a bundle's signature against the key the
+    source declares and refuses a bundle that does not match.
+  </p>
+</main>
+<script>
+(function () {
+  var params = new URLSearchParams(location.search);
+  var card = document.getElementById('card');
+  var open = document.getElementById('open');
+  var API = {
+    github: 'https://api.github.com/repos/',
+    gitlab: 'https://gitlab.com/api/v4/projects/'
+  };
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function fail(message) {
+    card.innerHTML =
+      '<div class="row"><span class="bad">' + escapeHtml(message) + '</span></div>' +
+      '<div class="row"><dt>What to do</dt><dd>Ask whoever shared the link for a new one, or add ' +
+      'the repository by hand in MAX Patcher &rarr; Sources.</dd></div>';
+    open.setAttribute('aria-disabled', 'true');
+    open.removeAttribute('href');
+  }
+
+  function rows(pairs) {
+    return pairs.filter(function (p) { return p[1]; }).map(function (p) {
+      return '<div class="row"><dt>' + escapeHtml(p[0]) + '</dt><dd>' +
+             escapeHtml(p[1]) + '</dd></div>';
+    }).join('');
+  }
+
+  var provider = params.get('github') ? 'github' : (params.get('gitlab') ? 'gitlab' : null);
+  if (!provider) {
+    fail('This link does not name a GitHub or GitLab repository.');
+    return;
+  }
+
+  var repo = (params.get(provider) || '').trim();
+  var name = (params.get('name') || '').trim();
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
+    fail('"' + repo + '" is not a valid repository. It must look like owner/repo.');
+    return;
+  }
+
+  fetch(API[provider] + encodeURIComponent(repo), { headers: { Accept: 'application/json' } })
+    .then(function (r) {
+      if (r.status === 404) { throw new Error('notfound'); }
+      if (!r.ok) { throw new Error('http'); }
+      return r.json();
+    })
+    .then(function (data) {
+      var title = data.full_name || data.path_with_namespace || repo;
+      var licence = (data.license && (data.license.spdx_id || data.license.name)) || '';
+      var pushed = data.pushed_at || data.last_activity_at || '';
+      card.innerHTML =
+        '<div class="row"><span class="ok">Repository found</span></div>' +
+        rows([
+          ['Repository', title],
+          ['Description', data.description || ''],
+          ['Licence', licence],
+          ['Last push', pushed ? String(pushed).slice(0, 10) : ''],
+          ['Link name', name]
+        ]);
+
+      var intent = 'intent://add-source?' + provider + '=' + encodeURIComponent(repo) +
+        (name ? '&name=' + encodeURIComponent(name) : '') +
+        '#Intent;scheme=maxpatcher;package=app.maxpatcher.manager;end';
+      open.href = intent;
+      open.removeAttribute('aria-disabled');
+    })
+    .catch(function (err) {
+      fail(err && err.message === 'notfound'
+        ? 'That repository does not exist, or it is private.'
+        : 'The repository could not be reached right now.');
+    });
+})();
+</script>
+</body>
+</html>
